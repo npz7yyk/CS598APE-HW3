@@ -18,3 +18,7 @@
 
 # Compiled handouts
 /handout/*.pdf
+test/build/
+test/results/
+*.exe
+identity.png
