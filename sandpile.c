@@ -80,6 +80,7 @@ static uint8_t *cur, *nxt, *msk;
 static int *ua, *ub;
 static int *sinks, nsinks;
 #define FLUSH 32
+static int sym, rows;
 
 static void setup() {
   lo = (int *)malloc(N * sizeof(int));
@@ -111,8 +112,10 @@ static void setup() {
   for (int i = 0; i < N; ++i)
     for (int j = lo[i]; j <= hi[i]; ++j)
       msk[(i + 1) * W + j + 1] = 0xFF;
+  sym = N % 2;
+  rows = sym ? N / 2 + 1 : N;
   nsinks = 0;
-  for (int r = 1; r <= N; ++r) {
+  for (int r = 1; r <= rows; ++r) {
     int a = W, b = -1;
     for (int k = r - 1; k <= r + 1; ++k) {
       int i = k - 1;
@@ -137,7 +140,7 @@ static void flush() {
 }
 
 static void stabilize() {
-  for (int r = 1; r <= N; ++r) {
+  for (int r = 1; r <= rows; ++r) {
     for (int j = ua[r]; j <= ub[r]; ++j) {
       size_t x = (size_t)r * W + j;
       if (msk[x]) {
@@ -153,11 +156,12 @@ static void stabilize() {
   long steps = 0;
   do {
     any = 0;
-    for (int r = 1; r <= N; ++r) {
+    for (int r = 1; r <= rows; ++r) {
+      int mid = sym && r == rows;
       const uint8_t *restrict c = cur + (size_t)r * W;
-      const uint8_t *restrict u = c - W, *restrict d = c + W;
+      const uint8_t *restrict u = c - W, *restrict d = mid ? u : c + W;
       const uint8_t *restrict m = msk + (size_t)r * W;
-      const uint8_t *restrict mu = m - W, *restrict md = m + W;
+      const uint8_t *restrict mu = m - W, *restrict md = mid ? mu : m + W;
       uint8_t *restrict n = nxt + (size_t)r * W;
       int a = ua[r], b = ub[r];
       for (int j = a; j <= b; ++j) {
@@ -175,9 +179,12 @@ static void stabilize() {
       flush();
   } while (any);
   flush();
-  for (int i = 0; i < N; ++i)
+  for (int i = 0; i < rows; ++i)
     for (int j = lo[i]; j <= hi[i]; ++j)
       G(i, j) = cur[(i + 1) * W + j + 1];
+  if (sym)
+    for (int i = N / 2 + 1; i < N; ++i)
+      memcpy(&G(i, -1), &G(N - 1 - i, -1), W * sizeof(int));
 }
 
 void find_identity() {
