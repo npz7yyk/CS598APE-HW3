@@ -19,7 +19,9 @@ static void die(const char *s) {
 }
 
 int N = 801;
-int **grid;
+int W;
+int *grid;
+#define G(i, j) grid[((i) + 1) * W + (j) + 1]
 
 // you can also use this function to debug print your sandpile
 static void render(char *filename) {
@@ -31,7 +33,7 @@ static void render(char *filename) {
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
       unsigned char r = 0, g = 0, b = 0;
-      switch (grid[i][j]) {
+      switch (G(i, j)) {
       case 0: // obsidian
         r = 15;
         g = 15;
@@ -99,18 +101,15 @@ static void stabilize() {
     changed = 0;
     for (int i = 0; i < N; ++i) {
       for (int j = lo[i]; j <= hi[i]; ++j) {
-        if (grid[i][j] < 4)
+        int *c = &G(i, j);
+        if (*c < 4)
           continue;
         changed = 1;
-        grid[i][j] -= 4;
-        if (i > 0)
-          grid[i - 1][j]++;
-        if (j > 0)
-          grid[i][j - 1]++;
-        if (i < N - 1)
-          grid[i + 1][j]++;
-        if (j < N - 1)
-          grid[i][j + 1]++;
+        *c -= 4;
+        c[-W]++;
+        c[-1]++;
+        c[W]++;
+        c[1]++;
       }
     }
   } while (changed);
@@ -119,13 +118,13 @@ static void stabilize() {
 void find_identity() {
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
-      grid[i][j] = 6;
+      G(i, j) = 6;
     }
   }
   stabilize();
   for (int i = 0; i < N; ++i) {
     for (int j = 0; j < N; ++j) {
-      grid[i][j] = 6 - grid[i][j];
+      G(i, j) = 6 - G(i, j);
     }
   }
   stabilize();
@@ -143,18 +142,15 @@ int main(int argc, char **argv) {
     die("grid size must be a positive int");
   N = (int)parsed;
 
-  grid = (int **)malloc(N * sizeof(int *));
-  for (int i = 0; i < N; ++i) {
-    grid[i] = (int *)malloc(N * sizeof(int));
-  }
+  W = N + 2;
+  grid = (int *)calloc((size_t)W * W, sizeof(int));
+  if (!grid)
+    die("malloc failed for the grid");
 
   compute_bounds();
   find_identity();
 
   render("identity.png");
-  for (int i = 0; i < N; ++i) {
-    free(grid[i]);
-  }
   free(grid);
   free(lo);
   free(hi);
