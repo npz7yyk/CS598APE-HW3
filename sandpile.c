@@ -102,14 +102,15 @@ static void stabilize() {
     for (int i = 0; i < N; ++i) {
       for (int j = lo[i]; j <= hi[i]; ++j) {
         int *c = &G(i, j);
-        if (*c < 4)
+        int q = *c >> 2;
+        if (!q)
           continue;
         changed = 1;
-        *c -= 4;
-        c[-W]++;
-        c[-1]++;
-        c[W]++;
-        c[1]++;
+        *c -= 4 * q;
+        c[-W] += q;
+        c[-1] += q;
+        c[W] += q;
+        c[1] += q;
       }
     }
   } while (changed);
