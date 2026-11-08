@@ -72,27 +72,45 @@ static void render(char *filename) {
   free(pixels);
 }
 
+static int *lo, *hi;
+
+static void compute_bounds() {
+  lo = (int *)malloc(N * sizeof(int));
+  hi = (int *)malloc(N * sizeof(int));
+  for (int i = 0; i < N; ++i) {
+    lo[i] = 0;
+    hi[i] = -1;
+    int first = 1;
+    for (int j = 0; j <= MAX(i, N - 1 - i); ++j) {
+      if ((i - N / 2) * (i - N / 2) + (j - N / 2) * (j - N / 2) <=
+          (N / 2) * (N / 2)) {
+        if (first)
+          lo[i] = j;
+        first = 0;
+        hi[i] = j;
+      }
+    }
+  }
+}
+
 static void stabilize() {
   int changed = 0;
   do {
     changed = 0;
     for (int i = 0; i < N; ++i) {
-      for (int j = 0; j <= MAX(i, N - 1 - i); ++j) {
-        if ((i - N / 2) * (i - N / 2) + (j - N / 2) * (j - N / 2) <=
-            (N / 2) * (N / 2)) {
-          if (grid[i][j] < 4)
-            continue;
-          changed = 1; // topple it
-          grid[i][j] -= 4;
-          if (i > 0)
-            grid[i - 1][j]++;
-          if (j > 0)
-            grid[i][j - 1]++;
-          if (i < N - 1)
-            grid[i + 1][j]++;
-          if (j < N - 1)
-            grid[i][j + 1]++;
-        }
+      for (int j = lo[i]; j <= hi[i]; ++j) {
+        if (grid[i][j] < 4)
+          continue;
+        changed = 1;
+        grid[i][j] -= 4;
+        if (i > 0)
+          grid[i - 1][j]++;
+        if (j > 0)
+          grid[i][j - 1]++;
+        if (i < N - 1)
+          grid[i + 1][j]++;
+        if (j < N - 1)
+          grid[i][j + 1]++;
       }
     }
   } while (changed);
@@ -130,6 +148,7 @@ int main(int argc, char **argv) {
     grid[i] = (int *)malloc(N * sizeof(int));
   }
 
+  compute_bounds();
   find_identity();
 
   render("identity.png");
@@ -137,5 +156,7 @@ int main(int argc, char **argv) {
     free(grid[i]);
   }
   free(grid);
+  free(lo);
+  free(hi);
   return EXIT_SUCCESS;
 }
