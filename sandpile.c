@@ -76,7 +76,12 @@ static void render(char *filename) {
 
 static int *lo, *hi;
 
-static void compute_bounds() {
+static uint8_t *cur, *nxt, *msk;
+static int *ua, *ub;
+static int *sinks, nsinks;
+#define FLUSH 32
+
+static void setup() {
   lo = (int *)malloc(N * sizeof(int));
   hi = (int *)malloc(N * sizeof(int));
   for (int i = 0; i < N; ++i) {
@@ -93,27 +98,86 @@ static void compute_bounds() {
       }
     }
   }
+
+  size_t cells = (size_t)(N + 2) * W;
+  cur = (uint8_t *)calloc(cells, 1);
+  nxt = (uint8_t *)calloc(cells, 1);
+  msk = (uint8_t *)calloc(cells, 1);
+  ua = (int *)malloc((N + 2) * sizeof(int));
+  ub = (int *)malloc((N + 2) * sizeof(int));
+  sinks = (int *)malloc(cells * sizeof(int));
+  if (!cur || !nxt || !msk || !ua || !ub || !sinks)
+    die("malloc failed for the stabilizer");
+  for (int i = 0; i < N; ++i)
+    for (int j = lo[i]; j <= hi[i]; ++j)
+      msk[(i + 1) * W + j + 1] = 0xFF;
+  nsinks = 0;
+  for (int r = 1; r <= N; ++r) {
+    int a = W, b = -1;
+    for (int k = r - 1; k <= r + 1; ++k) {
+      int i = k - 1;
+      if (i < 0 || i >= N || lo[i] > hi[i])
+        continue;
+      a = MIN(a, lo[i]);
+      b = MAX(b, hi[i] + 2);
+    }
+    ua[r] = a;
+    ub[r] = b;
+    for (int j = a; j <= b; ++j)
+      if (!msk[r * W + j])
+        sinks[nsinks++] = r * W + j;
+  }
+}
+
+static void flush() {
+  for (int k = 0; k < nsinks; ++k) {
+    grid[sinks[k]] += cur[sinks[k]];
+    cur[sinks[k]] = 0;
+  }
 }
 
 static void stabilize() {
-  int changed = 0;
-  do {
-    changed = 0;
-    for (int i = 0; i < N; ++i) {
-      for (int j = lo[i]; j <= hi[i]; ++j) {
-        int *c = &G(i, j);
-        int q = *c >> 2;
-        if (!q)
-          continue;
-        changed = 1;
-        *c -= 4 * q;
-        c[-W] += q;
-        c[-1] += q;
-        c[W] += q;
-        c[1] += q;
+  for (int r = 1; r <= N; ++r) {
+    for (int j = ua[r]; j <= ub[r]; ++j) {
+      size_t x = (size_t)r * W + j;
+      if (msk[x]) {
+        if (grid[x] < 0 || grid[x] > 7)
+          die("stabilize() needs 0 to 7 grains per cell");
+        cur[x] = (uint8_t)grid[x];
+      } else {
+        cur[x] = 0;
       }
     }
-  } while (changed);
+  }
+  uint8_t any;
+  long steps = 0;
+  do {
+    any = 0;
+    for (int r = 1; r <= N; ++r) {
+      const uint8_t *restrict c = cur + (size_t)r * W;
+      const uint8_t *restrict u = c - W, *restrict d = c + W;
+      const uint8_t *restrict m = msk + (size_t)r * W;
+      const uint8_t *restrict mu = m - W, *restrict md = m + W;
+      uint8_t *restrict n = nxt + (size_t)r * W;
+      int a = ua[r], b = ub[r];
+      for (int j = a; j <= b; ++j) {
+        uint8_t q = (c[j] >> 2) & m[j];
+        n[j] = (uint8_t)(c[j] - (q << 2) + ((u[j] >> 2) & mu[j]) +
+                         ((d[j] >> 2) & md[j]) + ((c[j - 1] >> 2) & m[j - 1]) +
+                         ((c[j + 1] >> 2) & m[j + 1]));
+        any |= q;
+      }
+    }
+    uint8_t *t = cur;
+    cur = nxt;
+    nxt = t;
+    if (++steps % FLUSH == 0)
+      flush();
+  } while (any);
+  flush();
+  for (int i = 0; i < N; ++i)
+    for (int j = lo[i]; j <= hi[i]; ++j)
+      G(i, j) = cur[(i + 1) * W + j + 1];
 }
 
 void find_identity() {
@@ -143,17 +207,23 @@ int main(int argc, char **argv) {
     die("grid size must be a positive int");
   N = (int)parsed;
 
-  W = N + 2;
-  grid = (int *)calloc((size_t)W * W, sizeof(int));
+  W = (N + 3 + 63) / 64 * 64;
+  grid = (int *)calloc((size_t)(N + 2) * W, sizeof(int));
   if (!grid)
     die("malloc failed for the grid");
 
-  compute_bounds();
+  setup();
   find_identity();
 
   render("identity.png");
   free(grid);
   free(lo);
   free(hi);
+  free(cur);
+  free(nxt);
+  free(msk);
+  free(ua);
+  free(ub);
+  free(sinks);
   return EXIT_SUCCESS;
 }
