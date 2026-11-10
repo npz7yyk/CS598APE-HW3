@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <math.h>
+#include <omp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +80,8 @@ static int *lo, *hi;
 static uint8_t *cur, *nxt, *msk;
 static int *ua, *ub;
 static int *sinks, nsinks;
+static int *srow;
+static long *cum;
 #define FLUSH 32
 static int sym, rows;
 
@@ -107,7 +110,9 @@ static void setup() {
   ua = (int *)malloc((N + 2) * sizeof(int));
   ub = (int *)malloc((N + 2) * sizeof(int));
   sinks = (int *)malloc(cells * sizeof(int));
-  if (!cur || !nxt || !msk || !ua || !ub || !sinks)
+  srow = (int *)malloc((N + 3) * sizeof(int));
+  cum = (long *)malloc((N + 3) * sizeof(long));
+  if (!cur || !nxt || !msk || !ua || !ub || !sinks || !srow || !cum)
     die("malloc failed for the stabilizer");
   for (int i = 0; i < N; ++i)
     for (int j = lo[i]; j <= hi[i]; ++j)
@@ -115,7 +120,9 @@ static void setup() {
   sym = N % 2;
   rows = sym ? N / 2 + 1 : N;
   nsinks = 0;
+  cum[1] = 0;
   for (int r = 1; r <= rows; ++r) {
+    srow[r] = nsinks;
     int a = W, b = -1;
     for (int k = r - 1; k <= r + 1; ++k) {
       int i = k - 1;
@@ -129,14 +136,43 @@ static void setup() {
     for (int j = a; j <= b; ++j)
       if (!msk[r * W + j])
         sinks[nsinks++] = r * W + j;
+    cum[r + 1] = cum[r] + MAX(0, b - a + 1);
+  }
+  srow[rows + 1] = nsinks;
+}
+
+static void flush(uint8_t *v, int r0, int r1) {
+  for (int k = srow[r0]; k < srow[r1]; ++k) {
+    grid[sinks[k]] += v[sinks[k]];
+    v[sinks[k]] = 0;
   }
 }
 
-static void flush() {
-  for (int k = 0; k < nsinks; ++k) {
-    grid[sinks[k]] += cur[sinks[k]];
-    cur[sinks[k]] = 0;
+static inline uint8_t update_row(const uint8_t *cur, uint8_t *nxt, int r) {
+  int mid = sym && r == rows;
+  const uint8_t *restrict c = cur + (size_t)r * W;
+  const uint8_t *restrict u = c - W, *restrict d = mid ? u : c + W;
+  const uint8_t *restrict m = msk + (size_t)r * W;
+  const uint8_t *restrict mu = m - W, *restrict md = mid ? mu : m + W;
+  uint8_t *restrict n = nxt + (size_t)r * W;
+  int a = ua[r], b = ub[r];
+  uint8_t any = 0;
+  for (int j = a; j <= b; ++j) {
+    uint8_t q = (c[j] >> 2) & m[j];
+    n[j] = (uint8_t)(c[j] - (q << 2) + ((u[j] >> 2) & mu[j]) +
+                     ((d[j] >> 2) & md[j]) + ((c[j - 1] >> 2) & m[j - 1]) +
+                     ((c[j + 1] >> 2) & m[j + 1]));
+    any |= q;
   }
+  return any;
+}
+
+static int first_row(int t, int T) {
+  long goal = cum[rows + 1] * t / T;
+  int r = 1;
+  while (r <= rows && cum[r] < goal)
+    ++r;
+  return r;
 }
 
 static void stabilize() {
@@ -152,33 +188,40 @@ static void stabilize() {
       }
     }
   }
-  uint8_t any;
-  long steps = 0;
-  do {
-    any = 0;
-    for (int r = 1; r <= rows; ++r) {
-      int mid = sym && r == rows;
-      const uint8_t *restrict c = cur + (size_t)r * W;
-      const uint8_t *restrict u = c - W, *restrict d = mid ? u : c + W;
-      const uint8_t *restrict m = msk + (size_t)r * W;
-      const uint8_t *restrict mu = m - W, *restrict md = mid ? mu : m + W;
-      uint8_t *restrict n = nxt + (size_t)r * W;
-      int a = ua[r], b = ub[r];
-      for (int j = a; j <= b; ++j) {
-        uint8_t q = (c[j] >> 2) & m[j];
-        n[j] = (uint8_t)(c[j] - (q << 2) + ((u[j] >> 2) & mu[j]) +
-                         ((d[j] >> 2) & md[j]) + ((c[j - 1] >> 2) & m[j - 1]) +
-                         ((c[j + 1] >> 2) & m[j + 1]));
-        any |= q;
-      }
+  int T = omp_get_max_threads();
+  uint8_t *post = (uint8_t *)calloc((size_t)2 * T * 64, 1);
+  if (!post)
+    die("malloc failed for the step flags");
+#pragma omp parallel num_threads(T)
+  {
+    int t = omp_get_thread_num(), nt = omp_get_num_threads();
+    int r0 = first_row(t, nt), r1 = first_row(t + 1, nt);
+    uint8_t *c = cur, *n = nxt;
+    for (long steps = 1;; ++steps) {
+      uint8_t any = 0;
+      for (int r = r0; r < r1; ++r)
+        any |= update_row(c, n, r);
+      if (steps % FLUSH == 0)
+        flush(n, r0, r1);
+      uint8_t *slot = post + (steps % 2) * T * 64;
+      slot[t * 64] = any;
+#pragma omp barrier
+      any = 0;
+      for (int k = 0; k < nt; ++k)
+        any |= slot[k * 64];
+      uint8_t *x = c;
+      c = n;
+      n = x;
+      if (!any)
+        break;
     }
-    uint8_t *t = cur;
-    cur = nxt;
-    nxt = t;
-    if (++steps % FLUSH == 0)
-      flush();
-  } while (any);
-  flush();
+    flush(c, r0, r1);
+    if (t == 0) {
+      cur = c;
+      nxt = n;
+    }
+  }
+  free(post);
   for (int i = 0; i < rows; ++i)
     for (int j = lo[i]; j <= hi[i]; ++j)
       G(i, j) = cur[(i + 1) * W + j + 1];
@@ -232,5 +275,7 @@ int main(int argc, char **argv) {
   free(ua);
   free(ub);
   free(sinks);
+  free(srow);
+  free(cum);
   return EXIT_SUCCESS;
 }
