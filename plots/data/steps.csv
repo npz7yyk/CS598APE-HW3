@@ -1,5 +1,7 @@
 stabilizer,pass,steps
 opt1 sweeps (in place),1,119193
 opt1 sweeps (in place),2,47673
+opt3 sweeps (multi-topple),1,88490
+opt3 sweeps (multi-topple),2,47672
 opt4 steps (all at once),1,176800
 opt4 steps (all at once),2,95494

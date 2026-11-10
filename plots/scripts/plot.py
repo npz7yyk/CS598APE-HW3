@@ -13,7 +13,7 @@ from matplotlib.transforms import Bbox
 from PIL import Image
 
 INK = '#000000'
-SERIES = ['#2a78d6', '#eb6834']
+SERIES = ['#2a78d6', '#1baf7a', '#eb6834']
 
 for d in ['/usr/share/texmf/fonts/opentype/public/libertine',
           '/usr/share/texlive/texmf-dist/fonts/opentype/public/libertine',
